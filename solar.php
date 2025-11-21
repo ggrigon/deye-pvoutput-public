@@ -239,6 +239,15 @@ function sendToPVOutput(int $total, array $config): array {
 // ===============================
 // SCRIPT START
 // ===============================
+$scriptStartTime = microtime(true);
+$executionStats = [
+    'start_time' => $scriptStartTime,
+    'devices' => [],
+    'total_attempts' => 0,
+    'pvoutput_send_time' => 0,
+    'pvoutput_success' => false,
+];
+
 echo "=== SCRIPT START ===\n";
 echo "Date/Time: " . date('Y-m-d H:i:s') . "\n\n";
 
@@ -277,6 +286,8 @@ $numUrls = count($urls);
 // ===============================
 foreach ($urls as $index => $url) {
     $deviceNum = $index + 1;
+    $deviceStartTime = microtime(true);
+    
     echo "Device $deviceNum/$numUrls: Connecting...\n";
     
     $fetchResult = fetchDeviceData(
@@ -285,6 +296,10 @@ foreach ($urls as $index => $url) {
         $config['settings']['max_retries'] ?? 3,
         $config['settings']['base_delay'] ?? 5
     );
+    
+    $deviceEndTime = microtime(true);
+    $deviceDuration = round($deviceEndTime - $deviceStartTime, 2);
+    $executionStats['total_attempts'] += $fetchResult['attempts'] ?? 1;
     
     if (!$fetchResult['success']) {
         $errorMsg = sprintf(
@@ -295,6 +310,13 @@ foreach ($urls as $index => $url) {
         echo "  ERROR: $errorMsg\n";
         error_log("Device $deviceNum: $errorMsg");
         $results[$url] = null;
+        
+        $executionStats['devices'][$deviceNum] = [
+            'success' => false,
+            'attempts' => $fetchResult['attempts'],
+            'duration' => $deviceDuration,
+            'error' => $fetchResult['error'],
+        ];
     } else {
         echo "  Connected successfully!\n";
         $powerValue = extractPowerValue($fetchResult['data']);
@@ -302,13 +324,29 @@ foreach ($urls as $index => $url) {
         if (isValidPowerValue($powerValue)) {
             echo "  Power captured: {$powerValue} W\n";
             $results[$url] = $powerValue;
+            
+            $executionStats['devices'][$deviceNum] = [
+                'success' => true,
+                'attempts' => $fetchResult['attempts'],
+                'duration' => $deviceDuration,
+                'power' => $powerValue,
+            ];
         } else {
             $errorMsg = "Could not extract valid value from HTML";
             echo "  ERROR: $errorMsg\n";
             error_log("Device $deviceNum: $errorMsg");
             $results[$url] = null;
+            
+            $executionStats['devices'][$deviceNum] = [
+                'success' => false,
+                'attempts' => $fetchResult['attempts'],
+                'duration' => $deviceDuration,
+                'error' => $errorMsg,
+            ];
         }
     }
+    
+    echo "  Time: {$deviceDuration}s\n";
     
     // Delay between devices (except for the last one)
     if ($deviceNum < $numUrls) {
@@ -359,13 +397,18 @@ echo "\n=== FINAL TOTAL: $total W ===\n\n";
 // SENDING DATA TO PVOUTPUT
 // ===============================
 if ($total > 0 || $numSuccessful > 0) {
+    $pvStartTime = microtime(true);
     echo "Sending data to PVOutput...\n";
     $pvResult = sendToPVOutput((int)$total, $config);
+    $pvEndTime = microtime(true);
+    $executionStats['pvoutput_send_time'] = round($pvEndTime - $pvStartTime, 2);
     
     if ($pvResult['success']) {
         echo "✓ Data sent successfully!\n";
         echo "  Response: {$pvResult['response']}\n";
         echo "  HTTP Code: {$pvResult['http_code']}\n";
+        echo "  Send time: {$executionStats['pvoutput_send_time']}s\n";
+        $executionStats['pvoutput_success'] = true;
     } else {
         $errorMsg = sprintf(
             "Failed to send data to PVOutput: %s (HTTP %d)",
@@ -374,6 +417,7 @@ if ($total > 0 || $numSuccessful > 0) {
         );
         echo "✗ $errorMsg\n";
         error_log($errorMsg);
+        $executionStats['pvoutput_success'] = false;
         exit(1);
     }
 } else {
@@ -381,5 +425,41 @@ if ($total > 0 || $numSuccessful > 0) {
     exit(1);
 }
 
-echo "\n=== SCRIPT END ===\n";
+// ===============================
+// EXECUTION STATISTICS
+// ===============================
+$scriptEndTime = microtime(true);
+$totalDuration = round($scriptEndTime - $scriptStartTime, 2);
+$executionStats['end_time'] = $scriptEndTime;
+$executionStats['total_duration'] = $totalDuration;
+
+// Calculate device statistics
+$successfulDevices = array_filter($executionStats['devices'], fn($d) => $d['success'] ?? false);
+$failedDevices = array_filter($executionStats['devices'], fn($d) => !($d['success'] ?? false));
+$avgDeviceTime = count($executionStats['devices']) > 0 
+    ? round(array_sum(array_column($executionStats['devices'], 'duration')) / count($executionStats['devices']), 2)
+    : 0;
+$avgAttempts = count($executionStats['devices']) > 0
+    ? round(array_sum(array_column($executionStats['devices'], 'attempts')) / count($executionStats['devices']), 2)
+    : 0;
+
+echo "\n=== EXECUTION STATISTICS ===\n";
+echo "Total execution time: {$totalDuration}s\n";
+echo "Device collection time: " . round($totalDuration - $executionStats['pvoutput_send_time'], 2) . "s\n";
+echo "PVOutput send time: {$executionStats['pvoutput_send_time']}s\n";
+echo "\n";
+echo "Devices:\n";
+echo "  Total devices: {$numUrls}\n";
+echo "  Successful: " . count($successfulDevices) . " (" . round((count($successfulDevices) / $numUrls) * 100, 1) . "%)\n";
+echo "  Failed: " . count($failedDevices) . " (" . round((count($failedDevices) / $numUrls) * 100, 1) . "%)\n";
+echo "  Average time per device: {$avgDeviceTime}s\n";
+echo "  Average attempts per device: {$avgAttempts}\n";
+echo "  Total connection attempts: {$executionStats['total_attempts']}\n";
+echo "\n";
+echo "PVOutput:\n";
+echo "  Status: " . ($executionStats['pvoutput_success'] ? "✓ Success" : "✗ Failed") . "\n";
+echo "  Power sent: {$total} W\n";
+echo "\n";
+
+echo "=== SCRIPT END ===\n";
 exit(0);
