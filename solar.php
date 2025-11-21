@@ -170,6 +170,157 @@ function isValidPowerForPVOutput(int $power): bool {
 }
 
 /**
+ * Loads daily statistics from file
+ * 
+ * @param string $statsFile Path to statistics file
+ * @param string $date Date in Ymd format
+ * @return array Daily statistics array
+ */
+function loadDailyStats(string $statsFile, string $date): array {
+    if (!file_exists($statsFile)) {
+        return [];
+    }
+    
+    $allStats = json_decode(file_get_contents($statsFile), true) ?? [];
+    return $allStats[$date] ?? [];
+}
+
+/**
+ * Saves execution statistics to daily file
+ * 
+ * @param string $statsFile Path to statistics file
+ * @param string $date Date in Ymd format
+ * @param array $executionStats Current execution statistics
+ * @param int $totalPower Total power sent
+ * @return bool True if saved successfully
+ */
+function saveDailyStats(string $statsFile, string $date, array $executionStats, int $totalPower): bool {
+    $allStats = [];
+    if (file_exists($statsFile)) {
+        $allStats = json_decode(file_get_contents($statsFile), true) ?? [];
+    }
+    
+    if (!isset($allStats[$date])) {
+        $allStats[$date] = [
+            'date' => $date,
+            'executions' => [],
+            'summary' => [
+                'total_executions' => 0,
+                'successful_executions' => 0,
+                'failed_executions' => 0,
+                'power_values' => [],
+                'max_power' => 0,
+                'min_power' => PHP_INT_MAX,
+                'avg_power' => 0,
+                'total_energy_estimate' => 0, // Rough estimate based on power readings
+            ],
+        ];
+    }
+    
+    $execution = [
+        'timestamp' => date('Y-m-d H:i:s'),
+        'power' => $totalPower,
+        'success' => $executionStats['pvoutput_success'] ?? false,
+        'duration' => $executionStats['total_duration'] ?? 0,
+        'devices_successful' => count(array_filter($executionStats['devices'] ?? [], fn($d) => $d['success'] ?? false)),
+        'devices_failed' => count(array_filter($executionStats['devices'] ?? [], fn($d) => !($d['success'] ?? false))),
+        'total_attempts' => $executionStats['total_attempts'] ?? 0,
+    ];
+    
+    $allStats[$date]['executions'][] = $execution;
+    
+    // Update summary
+    $summary = &$allStats[$date]['summary'];
+    $summary['total_executions']++;
+    
+    if ($executionStats['pvoutput_success'] ?? false) {
+        $summary['successful_executions']++;
+        $summary['power_values'][] = $totalPower;
+        
+        if ($totalPower > $summary['max_power']) {
+            $summary['max_power'] = $totalPower;
+        }
+        
+        if ($totalPower < $summary['min_power']) {
+            $summary['min_power'] = $totalPower;
+        }
+        
+        if (!empty($summary['power_values'])) {
+            $summary['avg_power'] = (int)round(array_sum($summary['power_values']) / count($summary['power_values']));
+        }
+    } else {
+        $summary['failed_executions']++;
+    }
+    
+    // Clean old data (keep only last 30 days)
+    $cutoffDate = date('Ymd', strtotime('-30 days'));
+    foreach ($allStats as $statDate => $data) {
+        if ($statDate < $cutoffDate) {
+            unset($allStats[$statDate]);
+        }
+    }
+    
+    return file_put_contents($statsFile, json_encode($allStats, JSON_PRETTY_PRINT)) !== false;
+}
+
+/**
+ * Calculates and displays daily statistics
+ * 
+ * @param array $dailyStats Daily statistics array
+ * @param string $date Current date
+ */
+function displayDailyStats(array $dailyStats, string $date): void {
+    if (empty($dailyStats)) {
+        return;
+    }
+    
+    $summary = $dailyStats['summary'] ?? [];
+    $executions = $dailyStats['executions'] ?? [];
+    
+    if (empty($summary) || empty($executions)) {
+        return;
+    }
+    
+    echo "\n=== DAILY STATISTICS (Today: " . date('Y-m-d', strtotime($date)) . ") ===\n";
+    echo "Total executions today: {$summary['total_executions']}\n";
+    echo "  Successful: {$summary['successful_executions']} (" . 
+         round(($summary['successful_executions'] / max($summary['total_executions'], 1)) * 100, 1) . "%)\n";
+    echo "  Failed: {$summary['failed_executions']} (" . 
+         round(($summary['failed_executions'] / max($summary['total_executions'], 1)) * 100, 1) . "%)\n";
+    echo "\n";
+    
+    if (!empty($summary['power_values'])) {
+        echo "Power Statistics:\n";
+        echo "  Maximum: " . number_format($summary['max_power']) . " W\n";
+        echo "  Minimum: " . number_format($summary['min_power']) . " W\n";
+        echo "  Average: " . number_format($summary['avg_power']) . " W\n";
+        echo "  Readings: " . count($summary['power_values']) . "\n";
+        
+        // Show trend (last 3 readings)
+        $recentReadings = array_slice($summary['power_values'], -3);
+        if (count($recentReadings) >= 2) {
+            $trend = end($recentReadings) - reset($recentReadings);
+            $trendSymbol = $trend > 0 ? '↑' : ($trend < 0 ? '↓' : '→');
+            echo "  Trend (last 3): {$trendSymbol} " . abs($trend) . " W\n";
+        }
+        echo "\n";
+    }
+    
+    // Show last 5 executions
+    $recentExecutions = array_slice($executions, -5);
+    if (count($recentExecutions) > 1) {
+        echo "Recent Executions:\n";
+        foreach (array_reverse($recentExecutions) as $exec) {
+            $status = $exec['success'] ? '✓' : '✗';
+            $time = date('H:i:s', strtotime($exec['timestamp']));
+            echo "  {$status} {$time} - " . number_format($exec['power']) . " W (" . 
+                 round($exec['duration'], 1) . "s)\n";
+        }
+        echo "\n";
+    }
+}
+
+/**
  * Sends data to PVOutput
  * 
  * @param int $total Total power in watts
@@ -240,6 +391,8 @@ function sendToPVOutput(int $total, array $config): array {
 // SCRIPT START
 // ===============================
 $scriptStartTime = microtime(true);
+$currentDate = date('Ymd');
+$statsFile = __DIR__ . '/daily_stats.json';
 $executionStats = [
     'start_time' => $scriptStartTime,
     'devices' => [],
@@ -250,6 +403,12 @@ $executionStats = [
 
 echo "=== SCRIPT START ===\n";
 echo "Date/Time: " . date('Y-m-d H:i:s') . "\n\n";
+
+// Load and display daily statistics
+$dailyStats = loadDailyStats($statsFile, $currentDate);
+if (!empty($dailyStats)) {
+    displayDailyStats($dailyStats, $currentDate);
+}
 
 // ===============================
 // DEVICE URL CONSTRUCTION
@@ -460,6 +619,17 @@ echo "PVOutput:\n";
 echo "  Status: " . ($executionStats['pvoutput_success'] ? "✓ Success" : "✗ Failed") . "\n";
 echo "  Power sent: {$total} W\n";
 echo "\n";
+
+// Save daily statistics
+if ($executionStats['pvoutput_success'] || $total > 0) {
+    saveDailyStats($statsFile, $currentDate, $executionStats, (int)$total);
+    
+    // Reload and display updated daily stats
+    $updatedDailyStats = loadDailyStats($statsFile, $currentDate);
+    if (!empty($updatedDailyStats)) {
+        displayDailyStats($updatedDailyStats, $currentDate);
+    }
+}
 
 echo "=== SCRIPT END ===\n";
 exit(0);

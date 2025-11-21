@@ -5,6 +5,9 @@ config.php
 *.log
 deye_monitor.log
 
+# Statistics
+daily_stats.json
+
 # Arquivos temporários
 *.tmp
 *.bak
