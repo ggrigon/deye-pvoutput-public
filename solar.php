@@ -7,7 +7,7 @@
  * PVOutput service for visualization and analysis.
  * 
  * @author Guilherme Rigon
- * @version 2.0
+ * @version 2.1
  * @license MIT
  */
 
@@ -16,31 +16,51 @@
 // ===============================
 $configFile = __DIR__ . '/config.php';
 if (!file_exists($configFile)) {
-    die("ERROR: config.php file not found!\n"
-        . "Copy config.php.example to config.php and configure your credentials.\n");
+    fwrite(STDERR, "ERROR: config.php file not found!\n");
+    fwrite(STDERR, "Copy config.php.example to config.php and configure your credentials.\n");
+    exit(1);
 }
 
 $config = require $configFile;
 
-// Basic configuration validation
+// Enhanced configuration validation
 if (empty($config['devices']['host']) || 
     empty($config['pvoutput']['api_key']) || 
     empty($config['pvoutput']['system_id'])) {
-    die("ERROR: Incomplete configuration! Check the config.php file.\n");
+    fwrite(STDERR, "ERROR: Incomplete configuration! Check the config.php file.\n");
+    exit(1);
+}
+
+// Validate configuration types and formats
+if (!is_string($config['devices']['host']) || 
+    (!filter_var($config['devices']['host'], FILTER_VALIDATE_IP) && 
+     !filter_var($config['devices']['host'], FILTER_VALIDATE_DOMAIN))) {
+    fwrite(STDERR, "ERROR: Invalid host format in config.php\n");
+    exit(1);
+}
+
+if (!is_array($config['devices']['ports']) || empty($config['devices']['ports'])) {
+    fwrite(STDERR, "ERROR: Invalid ports configuration in config.php\n");
+    exit(1);
+}
+
+if (!is_numeric($config['pvoutput']['system_id'])) {
+    fwrite(STDERR, "ERROR: Invalid system_id format in config.php\n");
+    exit(1);
 }
 
 // ===============================
 // ERROR AND LOGGING CONFIGURATION
 // ===============================
 ini_set('log_errors', 1);
-ini_set('error_log', $config['logging']['log_file']);
-ini_set('display_errors', $config['logging']['display_errors'] ? 1 : 0);
+ini_set('error_log', $config['logging']['log_file'] ?? __DIR__ . '/deye_monitor.log');
+ini_set('display_errors', ($config['logging']['display_errors'] ?? false) ? 1 : 0);
 error_reporting(E_ALL);
 
 // ===============================
 // TIMEZONE CONFIGURATION
 // ===============================
-date_default_timezone_set($config['settings']['timezone']);
+date_default_timezone_set($config['settings']['timezone'] ?? 'UTC');
 
 // ===============================
 // HELPER FUNCTIONS
@@ -48,27 +68,43 @@ date_default_timezone_set($config['settings']['timezone']);
 
 /**
  * Validates if a value is numeric and positive
+ * 
+ * @param mixed $value Value to validate
+ * @return bool True if valid power value
  */
-function isValidPowerValue($value) {
-    return $value !== null && is_numeric($value) && $value >= 0;
+function isValidPowerValue($value): bool {
+    return $value !== null && is_numeric($value) && $value >= 0 && $value <= 1000000; // Max 1MW
 }
 
 /**
  * Extracts power value from HTML
+ * 
+ * @param string $html HTML content from device
+ * @return int|null Extracted power value or null if not found
  */
-function extractPowerValue($html) {
+function extractPowerValue(string $html): ?int {
     if (preg_match('/webdata_now_p\s*=\s*["\']?(\d+)["\']?/', $html, $matches)) {
-        return (int)$matches[1];
+        $value = (int)$matches[1];
+        return isValidPowerValue($value) ? $value : null;
     }
     return null;
 }
 
 /**
  * Makes HTTP request with retry and exponential backoff
+ * 
+ * @param string $url URL to fetch
+ * @param int $timeout Timeout in seconds
+ * @param int $maxRetries Maximum number of retry attempts
+ * @param int $baseDelay Base delay in seconds for exponential backoff
+ * @return array Result array with 'success', 'data' or 'error', 'attempts'
  */
-function fetchDeviceData($url, $timeout, $maxRetries, $baseDelay) {
+function fetchDeviceData(string $url, int $timeout, int $maxRetries, int $baseDelay): array {
     $attempt = 0;
     $lastError = null;
+    
+    // Clear any previous errors
+    error_clear_last();
     
     while ($attempt < $maxRetries) {
         $attempt++;
@@ -79,35 +115,78 @@ function fetchDeviceData($url, $timeout, $maxRetries, $baseDelay) {
                 'method' => 'GET',
                 'header' => [
                     'Connection: close',
+                    'User-Agent: DeyeMonitor/2.1',
                 ],
+                'ignore_errors' => true, // Don't fail on HTTP errors, we'll check response
             ],
         ]);
         
-        $contents = @file_get_contents($url, false, $context);
+        // Remove @ suppression - handle errors properly
+        $contents = file_get_contents($url, false, $context);
         
-        if ($contents !== false) {
-            return ['success' => true, 'data' => $contents];
+        if ($contents !== false && $contents !== '') {
+            // Check HTTP response code if available
+            $httpResponse = isset($http_response_header) ? $http_response_header : [];
+            $statusCode = 0;
+            if (!empty($httpResponse) && preg_match('/HTTP\/\d\.\d\s+(\d+)/', $httpResponse[0], $matches)) {
+                $statusCode = (int)$matches[1];
+            }
+            
+            // Consider 2xx and 3xx as success
+            if ($statusCode === 0 || ($statusCode >= 200 && $statusCode < 400)) {
+                return ['success' => true, 'data' => $contents];
+            }
+            
+            $lastError = "HTTP $statusCode";
         }
         
-        $lastError = error_get_last();
+        $lastError = $lastError ?? (error_get_last()['message'] ?? 'Connection failed');
         
         if ($attempt < $maxRetries) {
             $delay = $baseDelay * (2 ** ($attempt - 1)); // exponential backoff
             sleep($delay);
         }
+        
+        // Clear errors before next attempt
+        error_clear_last();
     }
     
     return [
         'success' => false,
-        'error' => $lastError['message'] ?? 'Unknown error',
+        'error' => $lastError ?? 'Unknown error',
         'attempts' => $attempt,
     ];
 }
 
 /**
- * Sends data to PVOutput
+ * Validates power value before sending to PVOutput
+ * 
+ * @param int $power Power value in watts
+ * @return bool True if value is reasonable
  */
-function sendToPVOutput($total, $config) {
+function isValidPowerForPVOutput(int $power): bool {
+    // Reasonable range: 0 to 10MW (for very large installations)
+    return $power >= 0 && $power <= 10000000;
+}
+
+/**
+ * Sends data to PVOutput
+ * 
+ * @param int $total Total power in watts
+ * @param array $config Configuration array
+ * @return array Result array with 'success', 'response', 'http_code', 'error'
+ */
+function sendToPVOutput(int $total, array $config): array {
+    // Validate power value before sending
+    if (!isValidPowerForPVOutput($total)) {
+        return [
+            'success' => false,
+            'response' => '',
+            'http_code' => 0,
+            'error' => "Invalid power value: $total W (out of range)",
+        ];
+    }
+    
     $postData = [
         'd' => date('Ymd'),
         't' => date('H:i'),
@@ -115,9 +194,19 @@ function sendToPVOutput($total, $config) {
     ];
     
     $curl = curl_init("https://pvoutput.org/service/r2/addstatus.jsp");
+    if ($curl === false) {
+        return [
+            'success' => false,
+            'response' => '',
+            'http_code' => 0,
+            'error' => 'Failed to initialize cURL',
+        ];
+    }
+    
     curl_setopt_array($curl, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => $config['settings']['curl_timeout'],
+        CURLOPT_TIMEOUT => $config['settings']['curl_timeout'] ?? 30,
+        CURLOPT_CONNECTTIMEOUT => 10,
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => http_build_query($postData),
         CURLOPT_HTTPHEADER => [
@@ -127,6 +216,7 @@ function sendToPVOutput($total, $config) {
         ],
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'DeyeMonitor/2.1',
     ]);
     
     $response = curl_exec($curl);
@@ -135,11 +225,14 @@ function sendToPVOutput($total, $config) {
     
     curl_close($curl);
     
+    // Enhanced success check
+    $success = ($httpCode >= 200 && $httpCode < 300) && empty($error) && $response !== false;
+    
     return [
-        'success' => ($httpCode >= 200 && $httpCode < 300) && empty($error),
-        'response' => $response,
-        'http_code' => $httpCode,
-        'error' => $error,
+        'success' => $success,
+        'response' => $response !== false ? trim($response) : '',
+        'http_code' => (int)$httpCode,
+        'error' => $error ?: '',
     ];
 }
 
@@ -155,15 +248,25 @@ echo "Date/Time: " . date('Y-m-d H:i:s') . "\n\n";
 $devices = $config['devices'];
 $urls = [];
 foreach ($devices['ports'] as $port) {
+    if (!is_numeric($port) || $port < 1 || $port > 65535) {
+        fwrite(STDERR, "WARNING: Invalid port $port, skipping\n");
+        continue;
+    }
+    
     $url = sprintf(
         "http://%s:%s@%s:%d%s",
-        urlencode($devices['username']),
-        urlencode($devices['password']),
+        urlencode($devices['username'] ?? 'admin'),
+        urlencode($devices['password'] ?? 'admin'),
         $devices['host'],
-        $port,
-        $devices['path']
+        (int)$port,
+        $devices['path'] ?? '/status.html'
     );
     $urls[] = $url;
+}
+
+if (empty($urls)) {
+    fwrite(STDERR, "ERROR: No valid device URLs configured\n");
+    exit(1);
 }
 
 $results = [];
@@ -178,9 +281,9 @@ foreach ($urls as $index => $url) {
     
     $fetchResult = fetchDeviceData(
         $url,
-        $config['settings']['http_timeout'],
-        $config['settings']['max_retries'],
-        $config['settings']['base_delay']
+        $config['settings']['http_timeout'] ?? 10,
+        $config['settings']['max_retries'] ?? 3,
+        $config['settings']['base_delay'] ?? 5
     );
     
     if (!$fetchResult['success']) {
@@ -209,8 +312,9 @@ foreach ($urls as $index => $url) {
     
     // Delay between devices (except for the last one)
     if ($deviceNum < $numUrls) {
-        echo "  Waiting {$config['settings']['delay_between_devices']}s before next device...\n";
-        sleep($config['settings']['delay_between_devices']);
+        $delay = $config['settings']['delay_between_devices'] ?? 5;
+        echo "  Waiting {$delay}s before next device...\n";
+        sleep($delay);
     }
     
     echo "---------------------------------------\n";
@@ -256,7 +360,7 @@ echo "\n=== FINAL TOTAL: $total W ===\n\n";
 // ===============================
 if ($total > 0 || $numSuccessful > 0) {
     echo "Sending data to PVOutput...\n";
-    $pvResult = sendToPVOutput($total, $config);
+    $pvResult = sendToPVOutput((int)$total, $config);
     
     if ($pvResult['success']) {
         echo "✓ Data sent successfully!\n";
@@ -265,14 +369,17 @@ if ($total > 0 || $numSuccessful > 0) {
     } else {
         $errorMsg = sprintf(
             "Failed to send data to PVOutput: %s (HTTP %d)",
-            $pvResult['error'] ?: $pvResult['response'],
+            $pvResult['error'] ?: $pvResult['response'] ?: 'Unknown error',
             $pvResult['http_code']
         );
         echo "✗ $errorMsg\n";
         error_log($errorMsg);
+        exit(1);
     }
 } else {
     echo "Skipping PVOutput send (total = 0 and no valid devices)\n";
+    exit(1);
 }
 
 echo "\n=== SCRIPT END ===\n";
+exit(0);
