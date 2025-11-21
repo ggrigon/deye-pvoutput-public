@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deye Monitor - PVOutput Integration</title>
+    <meta name="description" content="PHP script for monitoring Deye inverters and sending data to PVOutput">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 60px 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        header h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        
+        header p {
+            font-size: 1.3em;
+            opacity: 0.9;
+            margin-bottom: 20px;
+        }
+        
+        .badges {
+            margin-top: 20px;
+        }
+        
+        .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            margin: 5px;
+            font-size: 0.9em;
+        }
+        
+        .content {
+            background: white;
+            padding: 40px;
+            margin-top: -30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h2 {
+            color: #667eea;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        h3 {
+            color: #764ba2;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .feature-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .feature-card h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e83e8c;
+        }
+        
+        pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        
+        pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+        }
+        
+        .button {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 10px 10px 0;
+            transition: background 0.3s;
+            font-weight: 600;
+        }
+        
+        .button:hover {
+            background: #5568d3;
+        }
+        
+        .button-secondary {
+            background: #764ba2;
+        }
+        
+        .button-secondary:hover {
+            background: #5a3a7a;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        table th, table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        table th {
+            background: #f8f9fa;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 4px solid;
+        }
+        
+        .alert-warning {
+            background: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        
+        .alert-info {
+            background: #d1ecf1;
+            border-color: #17a2b8;
+            color: #0c5460;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            border-color: #28a745;
+            color: #155724;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+            margin-top: 40px;
+        }
+        
+        .github-link {
+            margin-top: 30px;
+            text-align: center;
+        }
+        
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 2em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>⚡ Deye Monitor</h1>
+            <p>PHP script for monitoring Deye inverters and sending data to PVOutput</p>
+            <div class="badges">
+                <span class="badge">PHP</span>
+                <span class="badge">Solar Energy</span>
+                <span class="badge">PVOutput</span>
+                <span class="badge">Deye</span>
+                <span class="badge">Monitoring</span>
+            </div>
+            <div style="margin-top: 30px;">
+                <a href="https://github.com/ggrigon/deye-pvoutput-public" class="button">View on GitHub</a>
+                <a href="https://github.com/ggrigon/deye-pvoutput-public/archive/refs/heads/main.zip" class="button button-secondary">Download</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="content">
+            <h2>📋 Description</h2>
+            <p>This script connects to multiple Deye devices on a local network, collects real-time power data, and sends the information to the PVOutput service for visualization and analysis.</p>
+            
+            <div class="alert alert-info">
+                <strong>💡 Note:</strong> This script was created to solve the issue described in the <a href="https://forum.pvoutput.org/t/solarman-trannergy-auto-upload/8372" target="_blank">PVOutput forum</a> where automatic uploads from Deye/Solarman systems stopped working.
+            </div>
+
+            <h2>✨ Features</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>🔌 Multiple Device Monitoring</h4>
+                    <p>Collects data from multiple devices sequentially</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🔄 Automatic Retry</h4>
+                    <p>Retries connection on failure with exponential backoff (up to 3 attempts)</p>
+                </div>
+                <div class="feature-card">
+                    <h4>📊 Smart Fallback</h4>
+                    <p>Uses average of successful values for failed devices</p>
+                </div>
+                <div class="feature-card">
+                    <h4>☁️ PVOutput Integration</h4>
+                    <p>Automatically sends data to the cloud service</p>
+                </div>
+                <div class="feature-card">
+                    <h4>📝 Complete Logging</h4>
+                    <p>Logs all operations and errors to a log file</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🔒 Secure Configuration</h4>
+                    <p>Credentials separated from source code</p>
+                </div>
+            </div>
+
+            <h2>🚀 Quick Start</h2>
+            <h3>Prerequisites</h3>
+            <ul>
+                <li>PHP 7.4+</li>
+                <li>cURL extension enabled</li>
+                <li>Access to local network where Deye devices are connected</li>
+                <li>Internet access for PVOutput communication</li>
+            </ul>
+
+            <h3>Installation</h3>
+            <ol>
+                <li>Clone or download this repository</li>
+                <li>Copy <code>config.php.example</code> to <code>config.php</code></li>
+                <li>Edit <code>config.php</code> and fill in your credentials</li>
+                <li>Test execution: <code>php solar.php</code></li>
+                <li>Set up cron for automatic execution</li>
+            </ol>
+
+            <h2>⚙️ Configuration</h2>
+            <p>The <code>config.php</code> file contains all necessary settings:</p>
+            <pre><code>return [
+    'devices' => [
+        'host' => '192.168.1.100',
+        'username' => 'admin',
+        'password' => 'admin',
+        'ports' => [1231, 1232, 1233, 1234, 1235],
+        'path' => '/status.html',
+    ],
+    'pvoutput' => [
+        'api_key' => 'YOUR_API_KEY_HERE',
+        'system_id' => 'YOUR_SYSTEM_ID_HERE',
+    ],
+    'settings' => [
+        'timezone' => 'America/Sao_Paulo',
+        'max_retries' => 3,
+        'base_delay' => 5,
+        'http_timeout' => 10,
+        'curl_timeout' => 30,
+        'delay_between_devices' => 5,
+    ],
+];</code></pre>
+
+            <div class="alert alert-warning">
+                <strong>⚠️ Important:</strong> Get your PVOutput API Key and System ID from <a href="https://pvoutput.org/" target="_blank">pvoutput.org</a>. See <a href="https://github.com/ggrigon/deye-pvoutput-public/blob/main/HOW_TO_GET_KEYS.md" target="_blank">HOW_TO_GET_KEYS.md</a> for detailed instructions.
+            </div>
+
+            <h2>📅 Cron Scheduling</h2>
+            <p>To collect data every 5 minutes:</p>
+            <pre><code>*/5 * * * * cd /path/to/deye-pvoutput && php solar.php >> /dev/null 2>&1</code></pre>
+            
+            <p>To collect every hour:</p>
+            <pre><code>0 * * * * cd /path/to/deye-pvoutput && php solar.php >> /dev/null 2>&1</code></pre>
+
+            <div class="alert alert-info">
+                <strong>ℹ️ Note:</strong> Free PVOutput has request limits (60 requests per hour). Check the <a href="https://pvoutput.org/help.html" target="_blank">official documentation</a> for details.
+            </div>
+
+            <h2>🔧 Configuration Variables</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Variable</th>
+                        <th>Default</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>max_retries</code></td>
+                        <td>3</td>
+                        <td>Maximum number of attempts per device</td>
+                    </tr>
+                    <tr>
+                        <td><code>base_delay</code></td>
+                        <td>5</td>
+                        <td>Initial delay in seconds (grows exponentially)</td>
+                    </tr>
+                    <tr>
+                        <td><code>http_timeout</code></td>
+                        <td>10</td>
+                        <td>Timeout for HTTP connections in seconds</td>
+                    </tr>
+                    <tr>
+                        <td><code>curl_timeout</code></td>
+                        <td>30</td>
+                        <td>Timeout for cURL requests in seconds</td>
+                    </tr>
+                    <tr>
+                        <td><code>delay_between_devices</code></td>
+                        <td>5</td>
+                        <td>Delay between device requests (seconds)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>🔒 Security</h2>
+            <div class="alert alert-warning">
+                <ul style="margin-left: 20px;">
+                    <li><strong>NEVER</strong> commit the <code>config.php</code> file to Git</li>
+                    <li>The <code>config.php</code> file is in <code>.gitignore</code> to protect your credentials</li>
+                    <li>Use strong credentials for Deye devices</li>
+                    <li>Keep your PVOutput API Key secure</li>
+                    <li>Run script on secure/private network when possible</li>
+                </ul>
+            </div>
+
+            <h2>📚 Documentation</h2>
+            <ul>
+                <li><a href="https://github.com/ggrigon/deye-pvoutput-public/blob/main/README.md" target="_blank">Full README</a></li>
+                <li><a href="https://github.com/ggrigon/deye-pvoutput-public/blob/main/HOW_TO_GET_KEYS.md" target="_blank">How to Get PVOutput Keys</a></li>
+                <li><a href="https://pvoutput.org/help.html" target="_blank">PVOutput Documentation</a></li>
+            </ul>
+
+            <h2>🤝 Contributing</h2>
+            <p>Contributions are welcome! Please:</p>
+            <ol>
+                <li>Fork the project</li>
+                <li>Create a branch for your feature</li>
+                <li>Commit your changes</li>
+                <li>Push to the branch</li>
+                <li>Open a Pull Request</li>
+            </ol>
+
+            <h2>📄 License</h2>
+            <p>This project is under the MIT license.</p>
+
+            <div class="github-link">
+                <a href="https://github.com/ggrigon/deye-pvoutput-public" class="button">View on GitHub</a>
+                <a href="https://github.com/ggrigon/deye-pvoutput-public/issues" class="button button-secondary">Report Issue</a>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Made with ❤️ for the solar energy community</p>
+            <p style="margin-top: 10px; font-size: 0.9em;">
+                <a href="https://github.com/ggrigon/deye-pvoutput-public" style="color: #667eea;">GitHub</a> | 
+                <a href="https://forum.pvoutput.org/t/solarman-trannergy-auto-upload/8372" style="color: #667eea;">PVOutput Forum</a>
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
+
