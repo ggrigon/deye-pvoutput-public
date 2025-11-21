@@ -1,0 +1,26 @@
+# Arquivos de configuração com credenciais
+config.php
+
+# Logs
+*.log
+deye_monitor.log
+
+# Arquivos temporários
+*.tmp
+*.bak
+*~
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Arquivos de ambiente (se usar .env)
+.env
+.env.local
+

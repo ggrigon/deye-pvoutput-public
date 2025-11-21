@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# Configurações - ajuste conforme necessário
+# Você pode definir essas variáveis de ambiente ou editar diretamente aqui
+DEVICE_HOST="${DEYE_HOST:-seu-host.local}"
+DEVICE_USER="${DEYE_USER:-admin}"
+DEVICE_PASS="${DEYE_PASS:-admin}"
+PORTS=(1231 1232 1233 1234 1235)
+
+total=0
+
+echo "Monitorando dispositivos Deye..."
+echo "Host: $DEVICE_HOST"
+echo ""
+
+for port in "${PORTS[@]}"
+do
+    url="http://${DEVICE_HOST}:${port}/status.html"
+    
+    # Faz requisição com autenticação básica
+    output=$(curl -s -u "${DEVICE_USER}:${DEVICE_PASS}" "$url" 2>/dev/null | grep "webdata_now_p" | grep -oP '\d+' | head -1)
+    
+    if [[ -n "$output" && "$output" =~ ^[0-9]+$ ]]; then
+        echo "Porta $port: $output W"
+        total=$((total + output))
+    else
+        echo "Porta $port: ERRO ou valor inválido"
+    fi
+done
+
+echo ""
+echo "Total: $total W"
+

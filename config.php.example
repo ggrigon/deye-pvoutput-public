@@ -1,0 +1,41 @@
+<?php
+/**
+ * Configuration File - Template
+ * 
+ * Copy this file to config.php and fill in your credentials.
+ * The config.php file will be ignored by Git to protect your information.
+ */
+
+return [
+    // Deye device settings
+    'devices' => [
+        'host' => '192.168.1.100',     // IP or hostname of devices (e.g., 192.168.1.100 or inverter.local)
+        'username' => 'admin',          // HTTP authentication username
+        'password' => 'admin',          // HTTP authentication password
+        'ports' => [1231, 1232, 1233, 1234, 1235],  // Device ports
+        'path' => '/status.html',       // Status page path
+    ],
+    
+    // PVOutput settings
+    'pvoutput' => [
+        'api_key' => 'YOUR_API_KEY_HERE',     // Get from https://pvoutput.org/
+        'system_id' => 'YOUR_SYSTEM_ID_HERE',  // Your PVOutput System ID
+    ],
+    
+    // General settings
+    'settings' => [
+        'timezone' => 'America/Sao_Paulo',    // Timezone
+        'max_retries' => 3,                   // Maximum number of attempts per device
+        'base_delay' => 5,                    // Initial delay in seconds (exponential backoff)
+        'http_timeout' => 10,                 // Timeout for HTTP requests in seconds
+        'curl_timeout' => 30,                 // Timeout for cURL requests in seconds
+        'delay_between_devices' => 5,         // Delay between device requests (seconds)
+    ],
+    
+    // Logging settings
+    'logging' => [
+        'enabled' => true,
+        'log_file' => __DIR__ . '/deye_monitor.log',
+        'display_errors' => false,            // false in production, true for debug
+    ],
+];
