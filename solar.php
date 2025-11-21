@@ -111,7 +111,7 @@ function sendToPVOutput($total, $config) {
     $postData = [
         'd' => date('Ymd'),
         't' => date('H:i'),
-        'v1' => $total,
+        'v2' => $total,  // v2 = Power Generation (W) - instant value
     ];
     
     $curl = curl_init("https://pvoutput.org/service/r2/addstatus.jsp");
