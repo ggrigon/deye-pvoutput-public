@@ -321,13 +321,235 @@ function displayDailyStats(array $dailyStats, string $date): void {
 }
 
 /**
+ * Finds the nearest Weather Underground station
+ *
+ * @param float $lat Latitude
+ * @param float $lon Longitude
+ * @param string $apiKey Weather Underground API key
+ * @param int $timeout Request timeout in seconds
+ * @return string|null Station ID or null if not found
+ */
+function findNearestWeatherStation(float $lat, float $lon, string $apiKey, int $timeout = 10): ?string {
+    $url = sprintf(
+        "https://api.weather.com/v3/location/near?geocode=%s,%s&product=pws&format=json&apiKey=%s",
+        $lat,
+        $lon,
+        $apiKey
+    );
+
+    $curl = curl_init($url);
+    if ($curl === false) {
+        return null;
+    }
+
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'DeyeMonitor/2.1',
+    ]);
+
+    $response = curl_exec($curl);
+    $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
+
+    if ($response === false || $httpCode !== 200) {
+        return null;
+    }
+
+    $data = json_decode($response, true);
+    if (isset($data['location']['stationId'][0])) {
+        return $data['location']['stationId'][0];
+    }
+
+    return null;
+}
+
+/**
+ * Fetches current weather data from Weather Underground
+ *
+ * @param string $stationId Weather station ID
+ * @param string $apiKey Weather Underground API key
+ * @param int $timeout Request timeout in seconds
+ * @return array|null Weather data or null if failed
+ */
+function fetchWeatherData(string $stationId, string $apiKey, int $timeout = 10): ?array {
+    $url = sprintf(
+        "https://api.weather.com/v2/pws/observations/current?stationId=%s&format=json&units=m&apiKey=%s",
+        urlencode($stationId),
+        $apiKey
+    );
+
+    $curl = curl_init($url);
+    if ($curl === false) {
+        return null;
+    }
+
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'DeyeMonitor/2.1',
+    ]);
+
+    $response = curl_exec($curl);
+    $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
+
+    if ($response === false || $httpCode !== 200) {
+        return null;
+    }
+
+    $data = json_decode($response, true);
+    if (!isset($data['observations'][0])) {
+        return null;
+    }
+
+    $obs = $data['observations'][0];
+    return [
+        'station_id' => $obs['stationID'] ?? '',
+        'temperature' => $obs['metric']['temp'] ?? null,
+        'humidity' => $obs['humidity'] ?? null,
+        'solar_radiation' => $obs['solarRadiation'] ?? null,
+        'uv' => $obs['uv'] ?? null,
+        'wind_speed' => $obs['metric']['windSpeed'] ?? null,
+        'pressure' => $obs['metric']['pressure'] ?? null,
+        'obs_time' => $obs['obsTimeLocal'] ?? null,
+    ];
+}
+
+/**
+ * Gets weather data using config settings
+ *
+ * @param array $config Configuration array
+ * @return array|null Weather data or null if disabled/failed
+ */
+function getWeatherData(array $config): ?array {
+    // Check if weather is enabled
+    if (empty($config['weather']['enabled']) || empty($config['weather']['api_key'])) {
+        return null;
+    }
+
+    $apiKey = $config['weather']['api_key'];
+    $timeout = $config['weather']['timeout'] ?? 10;
+    $stationId = $config['weather']['station_id'] ?? '';
+
+    // If station configured, use it directly
+    if (!empty($stationId)) {
+        return fetchWeatherData($stationId, $apiKey, $timeout);
+    }
+
+    // Try preferred local stations first
+    $preferredStations = $config['weather']['preferred_stations'] ?? [];
+
+    $primaryData = null;
+    $primaryStation = null;
+
+    foreach ($preferredStations as $station) {
+        $data = fetchWeatherData($station, $apiKey, $timeout);
+        if ($data !== null && $data['temperature'] !== null) {
+            echo "  Weather: Using station $station\n";
+            $primaryData = $data;
+            $primaryStation = $station;
+            break;
+        }
+    }
+
+    if ($primaryData === null) {
+        // Fallback: auto-detect nearest station
+        $lat = $config['dashboard']['latitude'] ?? null;
+        $lon = $config['dashboard']['longitude'] ?? null;
+
+        if ($lat === null || $lon === null) {
+            echo "  Weather: No coordinates configured for auto-detection\n";
+            return null;
+        }
+
+        $stationId = findNearestWeatherStation($lat, $lon, $apiKey, $timeout);
+        if ($stationId === null) {
+            echo "  Weather: Could not find nearby station\n";
+            return null;
+        }
+        echo "  Weather: Auto-detected station $stationId\n";
+
+        return fetchWeatherData($stationId, $apiKey, $timeout);
+    }
+
+    // If primary station missing pressure, try to get from other stations
+    if ($primaryData['pressure'] === null) {
+        foreach ($preferredStations as $station) {
+            if ($station === $primaryStation) {
+                continue;
+            }
+            $fallbackData = fetchWeatherData($station, $apiKey, $timeout);
+            if ($fallbackData !== null && $fallbackData['pressure'] !== null) {
+                $primaryData['pressure'] = $fallbackData['pressure'];
+                echo "  Weather: Pressure from fallback station $station: {$fallbackData['pressure']} hPa\n";
+                break;
+            }
+        }
+    }
+
+    return $primaryData;
+}
+
+/**
+ * Fetches voltage data from Shelly EM
+ *
+ * @param array $config Configuration array
+ * @param int $phase Phase index (0=A, 1=B, 2=C)
+ * @return array|null Shelly data with voltage or null if failed
+ */
+function fetchShellyData(array $config, int $phase = 2): ?array {
+    if (empty($config['shelly']['enabled']) || empty($config['shelly']['url'])) {
+        return null;
+    }
+
+    $url = $config['shelly']['url'];
+    $timeout = $config['shelly']['timeout'] ?? 5;
+
+    $context = stream_context_create([
+        'http' => [
+            'timeout' => $timeout,
+            'method' => 'GET',
+            'header' => [
+                'Connection: close',
+                'User-Agent: DeyeMonitor/2.1',
+            ],
+        ],
+    ]);
+
+    $response = @file_get_contents($url, false, $context);
+    if ($response === false) {
+        return null;
+    }
+
+    $data = json_decode($response, true);
+    if (!isset($data['emeters'][$phase])) {
+        return null;
+    }
+
+    $meter = $data['emeters'][$phase];
+    return [
+        'voltage' => $meter['voltage'] ?? null,
+        'power' => $meter['power'] ?? null,
+        'phase' => $phase,
+    ];
+}
+
+/**
  * Sends data to PVOutput
- * 
+ *
  * @param int $total Total power in watts
  * @param array $config Configuration array
+ * @param array $extraData Optional extra data (temperature, voltage, extended)
  * @return array Result array with 'success', 'response', 'http_code', 'error'
  */
-function sendToPVOutput(int $total, array $config): array {
+function sendToPVOutput(int $total, array $config, array $extraData = []): array {
     // Validate power value before sending
     if (!isValidPowerForPVOutput($total)) {
         return [
@@ -343,7 +565,50 @@ function sendToPVOutput(int $total, array $config): array {
         't' => date('H:i'),
         'v2' => $total,  // v2 = Power Generation (W) - instant value
     ];
-    
+
+    // Add temperature if available (v5 = Temperature in Celsius)
+    $temperature = $extraData['temperature'] ?? null;
+    if ($temperature !== null && $temperature >= -100 && $temperature <= 100) {
+        $postData['v5'] = round($temperature, 1);
+    }
+
+    // Add voltage if available (v6 = Voltage in Volts)
+    $voltage = $extraData['voltage'] ?? null;
+    if ($voltage !== null && $voltage >= 0 && $voltage <= 500) {
+        $postData['v6'] = round($voltage, 1);
+    }
+
+    // Extended data from Weather Underground
+    // v7 = Humidity (%)
+    $humidity = $extraData['humidity'] ?? null;
+    if ($humidity !== null && $humidity >= 0 && $humidity <= 100) {
+        $postData['v7'] = round($humidity, 0);
+    }
+
+    // v8 = Solar Radiation (W/m²)
+    $solarRadiation = $extraData['solar_radiation'] ?? null;
+    if ($solarRadiation !== null && $solarRadiation >= 0) {
+        $postData['v8'] = round($solarRadiation, 1);
+    }
+
+    // v9 = UV Index
+    $uv = $extraData['uv'] ?? null;
+    if ($uv !== null && $uv >= 0) {
+        $postData['v9'] = round($uv, 1);
+    }
+
+    // v10 = Wind Speed (km/h)
+    $windSpeed = $extraData['wind_speed'] ?? null;
+    if ($windSpeed !== null && $windSpeed >= 0) {
+        $postData['v10'] = round($windSpeed, 1);
+    }
+
+    // v11 = Pressure (hPa)
+    $pressure = $extraData['pressure'] ?? null;
+    if ($pressure !== null && $pressure >= 800 && $pressure <= 1200) {
+        $postData['v11'] = round($pressure, 1);
+    }
+
     $curl = curl_init("https://pvoutput.org/service/r2/addstatus.jsp");
     if ($curl === false) {
         return [
@@ -553,12 +818,91 @@ if ($numSuccessful > 0) {
 echo "\n=== FINAL TOTAL: $total W ===\n\n";
 
 // ===============================
+// FETCH WEATHER DATA
+// ===============================
+$weatherData = null;
+$temperature = null;
+
+echo "Fetching weather data...\n";
+$weatherData = getWeatherData($config);
+
+if ($weatherData !== null) {
+    $temperature = $weatherData['temperature'];
+    echo "  Temperature: {$temperature}°C\n";
+    echo "  Humidity: {$weatherData['humidity']}%\n";
+    if ($weatherData['solar_radiation'] !== null) {
+        echo "  Solar Radiation: {$weatherData['solar_radiation']} W/m²\n";
+    }
+    echo "  Observation time: {$weatherData['obs_time']}\n";
+    $executionStats['weather'] = $weatherData;
+} else {
+    echo "  Weather data not available\n";
+}
+
+// ===============================
+// FETCH SHELLY VOLTAGE DATA
+// ===============================
+$shellyData = null;
+$voltage = null;
+
+echo "Fetching Shelly voltage data...\n";
+$shellyPhase = $config['shelly']['phase'] ?? 2;  // Default to Phase C (index 2)
+$shellyData = fetchShellyData($config, $shellyPhase);
+
+if ($shellyData !== null && $shellyData['voltage'] !== null) {
+    $voltage = $shellyData['voltage'];
+    $phaseLabel = chr(65 + $shellyPhase);  // 0=A, 1=B, 2=C
+    echo "  Voltage (Phase $phaseLabel): {$voltage} V\n";
+    if ($shellyData['power'] !== null) {
+        echo "  Power (Phase $phaseLabel): {$shellyData['power']} W\n";
+    }
+    $executionStats['shelly'] = $shellyData;
+} else {
+    echo "  Shelly voltage data not available\n";
+}
+
+// ===============================
 // SENDING DATA TO PVOUTPUT
 // ===============================
 if ($total > 0 || $numSuccessful > 0) {
+
+    // Prepare extra data for PVOutput
+    $extraData = [
+        'temperature' => $weatherData['temperature'] ?? null,
+        'voltage' => $voltage,
+        'humidity' => $weatherData['humidity'] ?? null,
+        'solar_radiation' => $weatherData['solar_radiation'] ?? null,
+        'uv' => $weatherData['uv'] ?? null,
+        'wind_speed' => $weatherData['wind_speed'] ?? null,
+        'pressure' => $weatherData['pressure'] ?? null,
+    ];
+
     $pvStartTime = microtime(true);
     echo "Sending data to PVOutput...\n";
-    $pvResult = sendToPVOutput((int)$total, $config);
+    echo "  Power (v2): {$total} W\n";
+    if ($extraData['temperature'] !== null) {
+        echo "  Temperature (v5): {$extraData['temperature']}°C\n";
+    }
+    if ($extraData['voltage'] !== null) {
+        echo "  Voltage (v6): {$extraData['voltage']} V\n";
+    }
+    if ($extraData['humidity'] !== null) {
+        echo "  Humidity (v7): {$extraData['humidity']}%\n";
+    }
+    if ($extraData['solar_radiation'] !== null) {
+        echo "  Solar Radiation (v8): {$extraData['solar_radiation']} W/m²\n";
+    }
+    if ($extraData['uv'] !== null) {
+        echo "  UV Index (v9): {$extraData['uv']}\n";
+    }
+    if ($extraData['wind_speed'] !== null) {
+        echo "  Wind Speed (v10): {$extraData['wind_speed']} km/h\n";
+    }
+    if ($extraData['pressure'] !== null) {
+        echo "  Pressure (v11): {$extraData['pressure']} hPa\n";
+    }
+
+    $pvResult = sendToPVOutput((int)$total, $config, $extraData);
     $pvEndTime = microtime(true);
     $executionStats['pvoutput_send_time'] = round($pvEndTime - $pvStartTime, 2);
     

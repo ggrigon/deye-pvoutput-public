@@ -60,7 +60,7 @@ return [
     'devices' => [
         'host' => '192.168.1.100',     // IP or hostname of devices
         'username' => 'admin',          // HTTP username
-        'password' => 'admin',           // HTTP password
+        'password' => 'admin',          // HTTP password
         'ports' => [1231, 1232, 1233, 1234, 1235],  // Device ports
         'path' => '/status.html',       // Status page path
     ],
@@ -76,6 +76,18 @@ return [
         'curl_timeout' => 30,
         'delay_between_devices' => 5,
     ],
+    'weather' => [
+        'enabled' => true,
+        'api_key' => 'YOUR_WUNDERGROUND_API_KEY',  // Weather Underground API
+        'station_id' => '',             // Leave empty for auto-detect
+        'timeout' => 10,
+    ],
+    'shelly' => [
+        'enabled' => true,
+        'url' => 'http://YOUR_SHELLY_IP/status',  // Shelly EM status URL
+        'timeout' => 5,
+        'phase' => 2,                   // Phase for voltage (0=A, 1=B, 2=C)
+    ],
 ];
 ```
 
@@ -88,6 +100,52 @@ return [
 5. Paste into the `config.php` file
 
 For detailed instructions, see [HOW_TO_GET_KEYS.md](HOW_TO_GET_KEYS.md).
+
+## Data Architecture
+
+### Data Sources
+
+```
++---------------------+     +---------------------+     +---------------------+
+|   Deye Inverters    |     |  Weather Underground|     |     Shelly EM       |
+|   (N devices)       |     |  (PWS stations)     |     |    (Phase A/B/C)    |
++----------+----------+     +----------+----------+     +----------+----------+
+           |                           |                           |
+           v                           v                           v
+      Power (W)                  Temperature                   Voltage (V)
+                                 Humidity (%)
+                                 Solar Radiation
+                                 UV Index
+                                 Wind Speed
+                                 Pressure
+           |                           |                           |
+           +---------------------------+---------------------------+
+                                       |
+                                       v
+                        +------------------------------+
+                        |      solar.php               |
+                        |  (Data Collection & Send)    |
+                        +------------------------------+
+                                       |
+                                       v
+                        +------------------------------+
+                        |     PVOutput API             |
+                        |  addstatus.jsp               |
+                        +------------------------------+
+```
+
+### PVOutput Parameters
+
+| Parameter | Data | Source | Description |
+|-----------|------|--------|-------------|
+| v2 | Power Generation (W) | Deye Inverters | Sum of all inverters |
+| v5 | Temperature (°C) | Weather Underground | Ambient temperature |
+| v6 | Voltage (V) | Shelly EM | Grid voltage |
+| v7 | Humidity (%) | Weather Underground | Extended data |
+| v8 | Solar Radiation (W/m²) | Weather Underground | Extended data |
+| v9 | UV Index | Weather Underground | Extended data |
+| v10 | Wind Speed (km/h) | Weather Underground | Extended data |
+| v11 | Pressure (hPa) | Weather Underground | Extended data |
 
 ## How It Works
 
@@ -262,11 +320,16 @@ Enviando dados ao PVOutput...
 ```
 deye-pvoutput/
 ├── solar.php              # Main script
+├── dashboard.php          # Web dashboard with charts
 ├── config.php.example     # Configuration template
 ├── config.php             # Your configurations (not versioned)
+├── daily_stats.json       # Daily statistics (auto-generated)
 ├── .gitignore             # Files ignored by Git
 ├── deye_monitor.log       # Log file (not versioned)
 ├── deye.sh.example        # Bash script example
+├── test_weather.php       # Weather Underground test script
+├── test_pvoutput_weather.php  # PVOutput + Weather test script
+├── test_full_integration.php  # Full integration test script
 └── README.md              # This file
 ```
 
@@ -294,6 +357,14 @@ For questions or issues:
 4. Open an issue on GitHub
 
 ## Changelog
+
+### v2.1
+- Weather Underground integration for temperature data (v5)
+- Shelly EM integration for voltage data (v6)
+- Extended weather data: humidity (v7), solar radiation (v8), UV index (v9), wind speed (v10), pressure (v11)
+- Auto-detection of nearest weather station
+- Web dashboard with real-time charts
+- Daily statistics tracking and analysis
 
 ### v2.0
 - Credentials separated into configuration file

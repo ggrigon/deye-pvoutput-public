@@ -38,4 +38,29 @@ return [
         'log_file' => __DIR__ . '/deye_monitor.log',
         'display_errors' => false,            // false in production, true for debug
     ],
+
+    // Dashboard settings (optional - for weather auto-detection)
+    'dashboard' => [
+        'city' => 'Your City',                // City name for display
+        'country' => 'US',                    // Country code (ISO 3166-1 alpha-2)
+        'latitude' => 0.0000,                 // Latitude for weather station auto-detection
+        'longitude' => 0.0000,                // Longitude for weather station auto-detection
+    ],
+
+    // Weather Underground settings (optional - for temperature reporting to PVOutput)
+    'weather' => [
+        'enabled' => false,                   // Enable weather data collection
+        'api_key' => 'YOUR_WUNDERGROUND_API_KEY',  // Weather Underground API key
+        'station_id' => '',                   // PWS station ID (leave empty to auto-detect nearest)
+        'preferred_stations' => [],           // Array of preferred station IDs to try first
+        'timeout' => 10,                      // API request timeout in seconds
+    ],
+
+    // Shelly EM settings (optional - for voltage reporting to PVOutput)
+    'shelly' => [
+        'enabled' => false,                   // Enable Shelly integration
+        'url' => 'http://YOUR_SHELLY_IP/status',  // Shelly status URL
+        'timeout' => 5,                       // Request timeout in seconds
+        'phase' => 2,                         // Phase to use for voltage (0=A, 1=B, 2=C)
+    ],
 ];
